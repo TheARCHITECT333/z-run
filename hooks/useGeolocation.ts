@@ -23,6 +23,7 @@ export function useGeolocation(useDebug: boolean = false) {
   
   const frameRef = useRef<number>(0);
   const targetRef = useRef<Position>(DEFAULT_START);
+  const lastUpdateRef = useRef<number>(0);
 
   useEffect(() => {
     if (useDebug) return;
@@ -34,6 +35,11 @@ export function useGeolocation(useDebug: boolean = false) {
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        const now = Date.now();
+        if (now - lastUpdateRef.current < 5000) return;
+        
+        lastUpdateRef.current = now;
+
         const newPos = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -44,7 +50,7 @@ export function useGeolocation(useDebug: boolean = false) {
         targetRef.current = newPos;
       },
       (err) => console.error(err),
-      { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -53,15 +59,21 @@ export function useGeolocation(useDebug: boolean = false) {
   useEffect(() => {
     const update = () => {
       if (targetRef.current && smoothPosition) {
-        const lerpFactor = 0.1;
+        const lerpFactor = 0.02; 
+        
         const newLat = smoothPosition.lat + (targetRef.current.lat - smoothPosition.lat) * lerpFactor;
         const newLng = smoothPosition.lng + (targetRef.current.lng - smoothPosition.lng) * lerpFactor;
         
-        setSmoothPosition({
-          ...targetRef.current,
-          lat: newLat,
-          lng: newLng,
-        });
+        const dLat = Math.abs(newLat - targetRef.current.lat);
+        const dLng = Math.abs(newLng - targetRef.current.lng);
+
+        if (dLat > 0.000001 || dLng > 0.000001) {
+             setSmoothPosition({
+              ...targetRef.current,
+              lat: newLat,
+              lng: newLng,
+            });
+        }
       }
       frameRef.current = requestAnimationFrame(update);
     };

@@ -20,18 +20,6 @@ export default function Home() {
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-zinc-950">
       <MapWrapper />
-      
-      <div className="absolute top-6 left-6 z-[1000] pointer-events-none">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-black italic text-red-600 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] leading-none">
-            Z-RUN
-          </h1>
-          <span className="text-[10px] text-zinc-400 font-mono uppercase tracking-[0.3em] pl-1">
-            Sector: Active
-          </span>
-        </div>
-      </div>
-
       <div className="absolute inset-0 pointer-events-none shadow-[inset_0_0_100px_rgba(0,0,0,0.6)] z-[500]" />
     </main>
   );

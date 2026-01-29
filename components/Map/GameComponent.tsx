@@ -1,61 +1,120 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, useMap, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMap, Circle, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { useGeolocation } from '@/hooks/useGeolocation';
+import { useGeolocation, Position } from '@/hooks/useGeolocation';
 import DebugJoystick from '../UI/DebugJoystick';
+import GameOverlay from '../UI/GameOverlay';
+import { generateSafeZone, getDistance } from '@/hooks/geo';
+
+const ENABLE_DEBUG_MODE = true; 
 
 // Marker
 const survivorIcon = L.divIcon({
-  className: 'custom-div-icon',
+  className: 'bg-transparent',
   html: `
-    <div class="relative flex items-center justify-center">
-      <div class="absolute w-10 h-10 bg-blue-500/20 rounded-full animate-ping"></div>
-      <div class="w-6 h-6 bg-blue-500 border-2 border-white rounded-full shadow-[0_0_15px_rgba(59,130,246,0.8)] relative z-10"></div>
+    <div class="w-full h-full relative flex items-center justify-center">
+      <div class="absolute w-12 h-12 bg-blue-500/30 rounded-full animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite]"></div>
+      <div class="w-4 h-4 bg-blue-500 border-2 border-white rounded-full shadow-lg relative z-10"></div>
     </div>
   `,
-  iconSize: [40, 40],
-  iconAnchor: [20, 20],
+  iconSize: [48, 48],
+  iconAnchor: [24, 24],
 });
 
-// Camera 
-function MapController({ position }: { position: { lat: number, lng: number } }) {
+function MapController({ 
+  position, 
+  safeZone, 
+  isFollowing, 
+  setIsFollowing 
+}: { 
+  position: Position, 
+  safeZone: Position | null,
+  isFollowing: boolean,
+  setIsFollowing: (v: boolean) => void
+}) {
   const map = useMap();
-  const boundsSet = useRef(false);
+  const lastSafeZone = useRef<Position | null>(null);
+  const isFirstLoad = useRef(true);
+
+  useMapEvents({
+    dragstart: () => setIsFollowing(false),
+    zoomstart: () => setIsFollowing(false), 
+  });
 
   useEffect(() => {
-    map.panTo([position.lat, position.lng], { animate: true, duration: 0.5 });
 
-    if (!boundsSet.current) {
-      map.setMinZoom(14);
+    if (isFirstLoad.current) {
+      map.setMinZoom(12);
       map.setMaxZoom(18);
-      
-      const buffer = 0.15;
-      const southWest = L.latLng(position.lat - buffer, position.lng - buffer);
-      const northEast = L.latLng(position.lat + buffer, position.lng + buffer);
-      const bounds = L.latLngBounds(southWest, northEast);
-
-      map.setMaxBounds(bounds);
-      map.options.maxBoundsViscosity = 1.0;
-      
-      boundsSet.current = true;
+      isFirstLoad.current = false;
     }
-  }, [position, map]);
+
+    if (safeZone && safeZone !== lastSafeZone.current) {
+      const bounds = L.latLngBounds(
+        [position.lat, position.lng],
+        [safeZone.lat, safeZone.lng]
+      );
+      map.fitBounds(bounds, { padding: [80, 80], animate: true, duration: 1.5 });
+      setIsFollowing(false);
+      lastSafeZone.current = safeZone;
+    } 
+    
+    else if (isFollowing) {
+      map.panTo([position.lat, position.lng], { animate: true, duration: 0.8 });
+    }
+  }, [position, safeZone, map, isFollowing, setIsFollowing]);
 
   return null;
 }
 
 export default function GameComponent() {
-  const [debugMode, setDebugMode] = useState(true);
-  const { position, setManualPosition } = useGeolocation(debugMode);
+  const { position, setManualPosition } = useGeolocation(ENABLE_DEBUG_MODE);
+  
+  // Game State
+  const [gameState, setGameState] = useState<'IDLE' | 'RUNNING' | 'WON' | 'GAME_OVER'>('IDLE');
+  const [safeZone, setSafeZone] = useState<Position | null>(null);
+  const [distanceToTarget, setDistanceToTarget] = useState<number>(0);
+  
+  // Camera State
+  const [isFollowing, setIsFollowing] = useState(true);
+
+  const startGame = (distanceKm: number) => {
+    if (!position) return;
+    const target = generateSafeZone(position.lat, position.lng, distanceKm);
+    setSafeZone({ ...target, accuracy: 0, heading: 0 });
+    setGameState('RUNNING');
+  };
+
+  const resetGame = () => {
+    setGameState('IDLE');
+    setSafeZone(null);
+    setIsFollowing(true);
+  };
+
+  useEffect(() => {
+    if (gameState === 'RUNNING' && position && safeZone) {
+      const dist = getDistance(position.lat, position.lng, safeZone.lat, safeZone.lng);
+      setDistanceToTarget(dist);
+      if (dist < 50) setGameState('WON');
+    }
+  }, [position, safeZone, gameState]);
 
   return (
     <div className="h-full w-full relative bg-zinc-950">
+      
+      <GameOverlay 
+        gameState={gameState} 
+        distanceToTarget={distanceToTarget}
+        onStart={startGame}
+        onReset={resetGame}
+      />
+
       {position && (
         <MapContainer
           center={[position.lat, position.lng]}
-          zoom={16} // Default starting zoom
+          zoom={16}
           zoomControl={false}
           className="h-full w-full"
           style={{ background: '#09090b' }}
@@ -65,46 +124,62 @@ export default function GameComponent() {
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           />
 
-          <MapController position={position} />
+          <MapController 
+            position={position} 
+            safeZone={safeZone} 
+            isFollowing={isFollowing}
+            setIsFollowing={setIsFollowing}
+          />
 
           <Marker position={[position.lat, position.lng]} icon={survivorIcon} />
           
-          <Circle 
-            center={[position.lat, position.lng]} 
-            radius={position.accuracy || 15} 
-            pathOptions={{ fillColor: '#3b82f6', fillOpacity: 0.15, color: '#3b82f6', weight: 1, opacity: 0.3 }} 
-          />
+          {safeZone && (gameState === 'RUNNING' || gameState === 'WON') && (
+            <>
+              <Circle 
+                center={[safeZone.lat, safeZone.lng]} 
+                radius={50} 
+                pathOptions={{ 
+                  fillColor: '#22c55e', 
+                  fillOpacity: 0.2, 
+                  color: '#22c55e', 
+                  weight: 2, 
+                  dashArray: '10, 10' 
+                }} 
+              />
+              {ENABLE_DEBUG_MODE && (
+                 <Polyline 
+                   positions={[[position.lat, position.lng], [safeZone.lat, safeZone.lng]]} 
+                   pathOptions={{ color: 'rgba(255,255,255,0.1)', weight: 1, dashArray: '5, 5' }} 
+                 />
+              )}
+            </>
+          )}
+
         </MapContainer>
       )}
 
-      {/* Debug Toggle */}
-      <div className="absolute top-6 right-6 z-[1000]">
-        <button 
-          onClick={() => setDebugMode(!debugMode)}
-          className={`px-4 py-2 rounded-lg backdrop-blur-md border transition-all text-[10px] font-bold tracking-widest uppercase ${
-            debugMode 
-              ? 'bg-orange-500/20 border-orange-500 text-orange-500' 
-              : 'bg-zinc-900/50 border-zinc-700 text-zinc-500'
-          }`}
-        >
-          Dev Mode: {debugMode ? 'ON' : 'OFF'}
-        </button>
-      </div>
+      {/* RECENTER BUTTON */}
+      {!isFollowing && position && (
+        <div className="absolute bottom-8 right-6 z-[1000] animate-in fade-in duration-200">
+           <button 
+             onClick={() => setIsFollowing(true)}
+             className="w-14 h-14 bg-zinc-900/90 backdrop-blur-md text-white rounded-full flex items-center justify-center shadow-2xl border border-zinc-700 active:scale-95 transition-all"
+           >
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+             </svg>
+           </button>
+        </div>
+      )}
 
-      {debugMode && position && (
+      {/* JOYSTICK */}
+      {ENABLE_DEBUG_MODE && position && gameState !== 'IDLE' && (
         <DebugJoystick 
           currentPosition={position} 
           onMove={(newPos) => setManualPosition(newPos)} 
         />
       )}
-
-      {/* Connection Status Indicator */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-full border border-zinc-800 backdrop-blur-sm">
-        <div className={`w-2 h-2 rounded-full ${debugMode ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]'}`}></div>
-        <span className="text-[10px] font-mono text-zinc-300 uppercase tracking-wider">
-          {debugMode ? 'SIMULATED SIGNAL' : 'LIVE GPS LINK'}
-        </span>
-      </div>
     </div>
   );
 }
