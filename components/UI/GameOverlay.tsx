@@ -1,6 +1,6 @@
 'use client';
 
-type GameState = 'IDLE' | 'RUNNING' | 'WON' | 'GAME_OVER';
+export type GameState = 'IDLE' | 'LOADING' | 'RUNNING' | 'WON' | 'GAME_OVER';
 
 interface Props {
   gameState: GameState;
@@ -10,7 +10,6 @@ interface Props {
 }
 
 export default function GameOverlay({ gameState, distanceToTarget, onStart, onReset }: Props) {
-  
     if (gameState === 'IDLE') {
         return (
         <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-md p-6">
@@ -39,6 +38,20 @@ export default function GameOverlay({ gameState, distanceToTarget, onStart, onRe
         );
     }
 
+    // LOADING
+    if (gameState === 'LOADING') {
+        return (
+        <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center bg-zinc-950 text-white">
+            <div className="flex flex-col items-center animate-pulse">
+            <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-6" />
+            <h2 className="text-xl font-black italic text-red-500 uppercase tracking-widest">Scanning Sector</h2>
+            <p className="text-[10px] font-mono text-zinc-500 mt-2">Fetching Road Data...</p>
+            </div>
+        </div>
+        );
+    }
+
+    // 3. WON SCREEN
     if (gameState === 'WON') {
     return (
         <div className="fixed inset-0 z-[2000] flex flex-col items-center justify-center bg-black overflow-hidden font-mono">
@@ -99,6 +112,26 @@ export default function GameOverlay({ gameState, distanceToTarget, onStart, onRe
         );
     }
 
+    // GAME OVER SCREEN
+    if (gameState === 'GAME_OVER') {
+        return (
+        <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center bg-red-900/90 backdrop-blur-md p-6 text-white animate-in zoom-in duration-100">
+            <div className="text-center space-y-6">
+            <div className="text-7xl drop-shadow-md animate-pulse">🧟</div>
+            <div>
+                <h1 className="text-6xl font-black uppercase tracking-tighter italic text-red-100">Infected</h1>
+                <p className="font-mono text-red-200 mt-2 tracking-widest uppercase text-sm">Signal Lost</p>
+            </div>
+            <button 
+                onClick={onReset}
+                className="px-12 py-5 bg-zinc-900 border border-red-500/50 text-red-500 font-black rounded-full shadow-2xl active:scale-95 transition-transform text-lg"
+            >
+                RETRY
+            </button>
+            </div>
+        </div>
+        );
+    }
 
     // RUNNING HUD
     return (

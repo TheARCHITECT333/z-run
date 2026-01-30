@@ -6,7 +6,7 @@ import L from 'leaflet';
 import { useGeolocation, Position } from '@/hooks/useGeolocation';
 import DebugJoystick from '../UI/DebugJoystick';
 import GameOverlay from '../UI/GameOverlay';
-import { generateSafeZone, getDistance } from '@/hooks/geo';
+import { generateSafeZone, fetchRoadsInArea, spawnZombies, getDistance } from '@/hooks/geo';
 
 const ENABLE_DEBUG_MODE = true; 
 
@@ -23,17 +23,17 @@ const survivorIcon = L.divIcon({
   iconAnchor: [24, 24],
 });
 
-function MapController({ 
-  position, 
-  safeZone, 
-  isFollowing, 
-  setIsFollowing 
-}: { 
-  position: Position, 
-  safeZone: Position | null,
-  isFollowing: boolean,
-  setIsFollowing: (v: boolean) => void
-}) {
+const zombieIcon = L.divIcon({
+  className: 'bg-transparent',
+  html: `<div class="w-full h-full flex items-center justify-center">
+      <div class="w-3 h-3 bg-red-600 rounded-full shadow-[0_0_10px_rgba(220,38,38,0.8)] border border-black animate-pulse"></div>
+    </div>`,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+});
+
+// CONTROLLER
+function MapController({ position, safeZone, isFollowing, setIsFollowing }: any) {
   const map = useMap();
   const lastSafeZone = useRef<Position | null>(null);
   const isFirstLoad = useRef(true);
@@ -72,24 +72,41 @@ function MapController({
 export default function GameComponent() {
   const { position, setManualPosition } = useGeolocation(ENABLE_DEBUG_MODE);
   
-  // Game State
-  const [gameState, setGameState] = useState<'IDLE' | 'RUNNING' | 'WON' | 'GAME_OVER'>('IDLE');
+  const [gameState, setGameState] = useState<'IDLE' | 'LOADING' | 'RUNNING' | 'WON' | 'GAME_OVER'>('IDLE');
   const [safeZone, setSafeZone] = useState<Position | null>(null);
   const [distanceToTarget, setDistanceToTarget] = useState<number>(0);
+  const [zombies, setZombies] = useState<any[]>([]);
   
   // Camera State
   const [isFollowing, setIsFollowing] = useState(true);
 
-  const startGame = (distanceKm: number) => {
+  const startGame = async (distanceKm: number) => {
     if (!position) return;
+    setGameState('LOADING');
     const target = generateSafeZone(position.lat, position.lng, distanceKm);
+    
+    const roads = await fetchRoadsInArea(position.lat, position.lng, target.lat, target.lng);
+    
+    // Density: roughly 40 per km
+    const zombieCount = Math.floor(distanceKm * 40);
+    const newZombies = spawnZombies(
+      roads, 
+      zombieCount, 
+      position.lat, 
+      position.lng,
+      target.lat,
+      target.lng
+    );
+
     setSafeZone({ ...target, accuracy: 0, heading: 0 });
+    setZombies(newZombies);
     setGameState('RUNNING');
   };
 
   const resetGame = () => {
     setGameState('IDLE');
     setSafeZone(null);
+    setZombies([]);
     setIsFollowing(true);
   };
 
@@ -97,9 +114,19 @@ export default function GameComponent() {
     if (gameState === 'RUNNING' && position && safeZone) {
       const dist = getDistance(position.lat, position.lng, safeZone.lat, safeZone.lng);
       setDistanceToTarget(dist);
-      if (dist < 50) setGameState('WON');
+      if (dist < 50) {
+        setGameState('WON');
+        return;
+      }
+      
+      for (const z of zombies) {
+        if (getDistance(position.lat, position.lng, z.lat, z.lng) < 15) {
+          setGameState('GAME_OVER');
+          break;
+        }
+      }
     }
-  }, [position, safeZone, gameState]);
+  }, [position, safeZone, gameState, zombies]);
 
   return (
     <div className="h-full w-full relative bg-zinc-950">
@@ -133,7 +160,11 @@ export default function GameComponent() {
 
           <Marker position={[position.lat, position.lng]} icon={survivorIcon} />
           
-          {safeZone && (gameState === 'RUNNING' || gameState === 'WON') && (
+          {(gameState === 'RUNNING' || gameState === 'GAME_OVER') && zombies.map((z) => (
+            <Marker key={z.id} position={[z.lat, z.lng]} icon={zombieIcon} />
+          ))}
+          
+          {safeZone && (gameState === 'RUNNING' || gameState === 'WON' || gameState === 'GAME_OVER') && (
             <>
               <Circle 
                 center={[safeZone.lat, safeZone.lng]} 
@@ -146,10 +177,10 @@ export default function GameComponent() {
                   dashArray: '10, 10' 
                 }} 
               />
-              {ENABLE_DEBUG_MODE && (
+              {ENABLE_DEBUG_MODE && gameState !== 'WON' && (
                  <Polyline 
                    positions={[[position.lat, position.lng], [safeZone.lat, safeZone.lng]]} 
-                   pathOptions={{ color: 'rgba(255,255,255,0.1)', weight: 1, dashArray: '5, 5' }} 
+                   pathOptions={{ color: 'rgba(255,255,255,0.05)', weight: 1, dashArray: '5, 5' }} 
                  />
               )}
             </>
@@ -174,7 +205,7 @@ export default function GameComponent() {
       )}
 
       {/* JOYSTICK */}
-      {ENABLE_DEBUG_MODE && position && gameState !== 'IDLE' && (
+      {ENABLE_DEBUG_MODE && position && gameState === 'RUNNING' && (
         <DebugJoystick 
           currentPosition={position} 
           onMove={(newPos) => setManualPosition(newPos)} 
