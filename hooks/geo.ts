@@ -102,14 +102,17 @@ export function spawnZombies(
   endLng: number
 ) {
   const zombies: { id: any; lat: any; lng: any; }[] = [];
+  const PLAYER_BUFFER = 50;
+  const SAFE_ZONE_BUFFER = 50;
   
   if (roadCoords.length > 0) {
     let attempts = 0;
-    while (zombies.length < count && attempts < count * 10) {
+    while (zombies.length < count && attempts < count * 20) {
       attempts++;
       const point = roadCoords[Math.floor(Math.random() * roadCoords.length)];
       
-      if (getDistance(startLat, startLng, point.lat, point.lng) < 50) continue;
+      if (getDistance(startLat, startLng, point.lat, point.lng) < PLAYER_BUFFER) continue;
+      if (getDistance(endLat, endLng, point.lat, point.lng) < SAFE_ZONE_BUFFER) continue;
       
       if (zombies.some(z => z.lat === point.lat && z.lng === point.lng)) continue;
 
@@ -123,10 +126,13 @@ export function spawnZombies(
     const minLng = Math.min(startLng, endLng);
     const maxLng = Math.max(startLng, endLng);
 
-    while (zombies.length < count) {
+    let attempts = 0;
+    while (zombies.length < count && attempts < count * 20) {
+      attempts++;
       const lat = minLat + Math.random() * (maxLat - minLat);
       const lng = minLng + Math.random() * (maxLng - minLng);
-      if (getDistance(startLat, startLng, lat, lng) < 50) continue;
+      if (getDistance(startLat, startLng, lat, lng) < PLAYER_BUFFER) continue;
+      if (getDistance(endLat, endLng, lat, lng) < SAFE_ZONE_BUFFER) continue;
       zombies.push({ id: Math.random(), lat, lng });
     }
   }
