@@ -1,3 +1,5 @@
+export type Point = { lat: number; lng: number };
+export type RoadSegment = Point[];
 /**
  * Calculates the distance between two coordinates in meters.
  * Useing Haversine formula.
@@ -46,8 +48,8 @@ export function generateSafeZone(startLat: number, startLng: number, distanceKm:
   return { lat: (lat2 * 180) / Math.PI, lng: (lon2 * 180) / Math.PI };
 }
 
-export async function fetchRoadsInArea(startLat: number, startLng: number, endLat: number, endLng: number) {
-  const pad = 0.002;
+export async function fetchRoadsInArea(startLat: number, startLng: number, endLat: number, endLng: number): Promise<RoadSegment[]> {
+  const pad = 0.004;
   const minLat = Math.min(startLat, endLat) - pad;
   const maxLat = Math.max(startLat, endLat) + pad;
   const minLng = Math.min(startLng, endLng) - pad;
@@ -66,76 +68,144 @@ export async function fetchRoadsInArea(startLat: number, startLng: number, endLa
   try {
     const response = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
     if (!response.ok) throw new Error("Overpass API failed");
-    
+
     const data = await response.json();
     
-    const nodeMap: Record<number, { lat: number, lng: number }> = {};
+    const nodeMap: Record<number, Point> = {};
     data.elements.forEach((el: any) => {
       if (el.type === 'node') nodeMap[el.id] = { lat: el.lat, lng: el.lon };
     });
-    const validCoords: { lat: number, lng: number }[] = [];
+    const segments: RoadSegment[] = [];
     data.elements.forEach((el: any) => {
-      if (el.type === 'way' && el.nodes) {
-        el.nodes.forEach((nodeId: number) => {
-          if (nodeMap[nodeId]) validCoords.push(nodeMap[nodeId]);
-        });
+      if (el.type === 'way' && el.nodes && el.nodes.length > 1) {
+        const path = el.nodes.map((id: number) => nodeMap[id]).filter(Boolean);
+        if (path.length > 1) segments.push(path);
       }
     });
-
-    return validCoords;
+    return segments;
   } catch (error) {
-    console.warn("Road fetch failed, using fallback:", error);
-    return []; 
+    console.warn("Road fetch failed:", error);
+    return [];
   }
 }
 
-/**
- * Places zombies on specific road coordinates.
- * Fallback: If no roads found (API error), scatters them randomly.
- */
+export type ZombieSpawn = { id: number; lat: number; lng: number; segmentId: number };
+
 export function spawnZombies(
-  roadCoords: { lat: number, lng: number }[], 
+  segments: RoadSegment[], 
   count: number, 
   startLat: number, 
   startLng: number,
   endLat: number,
   endLng: number
-) {
-  const zombies: { id: any; lat: any; lng: any; }[] = [];
-  const PLAYER_BUFFER = 50;
-  const SAFE_ZONE_BUFFER = 50;
+): ZombieSpawn[] {
+  const zombies: ZombieSpawn[] = [];
+  const PLAYER_BUFFER = 50; 
+  const SAFE_ZONE_BUFFER = 60;
   
-  if (roadCoords.length > 0) {
+  if (segments.length > 0) {
     let attempts = 0;
     while (zombies.length < count && attempts < count * 20) {
       attempts++;
-      const point = roadCoords[Math.floor(Math.random() * roadCoords.length)];
+      const segIndex = Math.floor(Math.random() * segments.length);
+      const segment = segments[segIndex];
+      const point = segment[Math.floor(Math.random() * segment.length)];
       
       if (getDistance(startLat, startLng, point.lat, point.lng) < PLAYER_BUFFER) continue;
       if (getDistance(endLat, endLng, point.lat, point.lng) < SAFE_ZONE_BUFFER) continue;
-      
       if (zombies.some(z => z.lat === point.lat && z.lng === point.lng)) continue;
 
-      zombies.push({ id: Math.random(), lat: point.lat, lng: point.lng });
-    }
-  } 
-  
-  else {
-    const minLat = Math.min(startLat, endLat);
-    const maxLat = Math.max(startLat, endLat);
-    const minLng = Math.min(startLng, endLng);
-    const maxLng = Math.max(startLng, endLng);
-
-    let attempts = 0;
-    while (zombies.length < count && attempts < count * 20) {
-      attempts++;
-      const lat = minLat + Math.random() * (maxLat - minLat);
-      const lng = minLng + Math.random() * (maxLng - minLng);
-      if (getDistance(startLat, startLng, lat, lng) < PLAYER_BUFFER) continue;
-      if (getDistance(endLat, endLng, lat, lng) < SAFE_ZONE_BUFFER) continue;
-      zombies.push({ id: Math.random(), lat, lng });
+      zombies.push({ id: Math.random(), lat: point.lat, lng: point.lng, segmentId: segIndex });
     }
   }
-
   return zombies;
+}
+
+// PATHFINDING & PHYSICS
+export function isPointOnRoad(lat: number, lng: number, roads: RoadSegment[], thresholdMeters: number = 10): boolean {
+  for (const road of roads) {
+    for (let i = 0; i < road.length - 1; i++) {
+      const p1 = road[i];
+      const p2 = road[i+1];
+      const dist = distanceFromLineSegment(lat, lng, p1.lat, p1.lng, p2.lat, p2.lng);
+      if (dist < thresholdMeters) return true;
+    }
+  }
+  return false;
+}
+
+export function isLineClear(startLat: number, startLng: number, endLat: number, endLng: number, roads: RoadSegment[]): boolean {
+  const dist = getDistance(startLat, startLng, endLat, endLng);
+  const steps = Math.ceil(dist / 10);
+  
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const lat = startLat + (endLat - startLat) * t;
+    const lng = startLng + (endLng - startLng) * t;
+    
+    if (!isPointOnRoad(lat, lng, roads, 12)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function snapToNetwork(lat: number, lng: number, roads: RoadSegment[]): { lat: number, lng: number } {
+  let bestPoint = { lat, lng };
+  let minDistance = Infinity;
+
+  for (const road of roads) {
+    for (let i = 0; i < road.length - 1; i++) {
+      const p1 = road[i];
+      const p2 = road[i+1];
+      const { point, dist } = nearestPointOnSegment(lat, lng, p1.lat, p1.lng, p2.lat, p2.lng);
+      
+      if (dist < minDistance) {
+        minDistance = dist;
+        bestPoint = point;
+      }
+    }
+  }
+  return bestPoint;
+}
+
+// HELPERS
+function distanceFromLineSegment(pLat: number, pLng: number, aLat: number, aLng: number, bLat: number, bLng: number) {
+  return nearestPointOnSegment(pLat, pLng, aLat, aLng, bLat, bLng).dist;
+}
+
+function nearestPointOnSegment(pLat: number, pLng: number, aLat: number, aLng: number, bLat: number, bLng: number) {
+
+  const x = pLng;
+  const y = pLat;
+  const x1 = aLng;
+  const y1 = aLat;
+  const x2 = bLng;
+  const y2 = bLat;
+
+  const A = x - x1;
+  const B = y - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  let param = -1;
+  if (lenSq !== 0) param = dot / lenSq;
+
+  let xx, yy;
+
+  if (param < 0) {
+    xx = x1;
+    yy = y1;
+  } else if (param > 1) {
+    xx = x2;
+    yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
+  }
+
+  const dist = getDistance(pLat, pLng, yy, xx);
+  return { point: { lat: yy, lng: xx }, dist };
 }

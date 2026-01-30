@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, useMap, Circle, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { useGeolocation, Position } from '@/hooks/useGeolocation';
+import { useZombieAI } from '@/hooks/useZombieAI';
 import DebugJoystick from '../UI/DebugJoystick';
-import GameOverlay from '../UI/GameOverlay';
-import { generateSafeZone, fetchRoadsInArea, spawnZombies, getDistance } from '@/hooks/geo';
+import GameOverlay, { GameState } from '../UI/GameOverlay';
+import { generateSafeZone, fetchRoadsInArea, spawnZombies, getDistance, RoadSegment } from '@/hooks/geo';
 
 const ENABLE_DEBUG_MODE = true; 
 
@@ -23,16 +24,43 @@ const survivorIcon = L.divIcon({
   iconAnchor: [24, 24],
 });
 
-const zombieIcon = L.divIcon({
-  className: 'bg-transparent',
-  html: `<div class="w-full h-full flex items-center justify-center">
-      <div class="w-3 h-3 bg-red-600 rounded-full shadow-[0_0_10px_rgba(220,38,38,0.8)] border border-black animate-pulse"></div>
-    </div>`,
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
-});
+const createZombieIcon = (heading: number, state: 'IDLE' | 'CHASE' | 'SEARCHING') => {
+  let color = 'bg-zinc-700';
+  let arrowColor = 'border-b-zinc-700';
+  let pulse = '';
 
-// CONTROLLER
+  if (state === 'CHASE') {
+    color = 'bg-red-600';
+    arrowColor = 'border-b-red-600';
+    pulse = '<div class="absolute w-full h-full bg-red-500/40 rounded-full animate-ping"></div>';
+  } else if (state === 'SEARCHING') {
+    color = 'bg-orange-500';
+    arrowColor = 'border-b-orange-500';
+    pulse = '<div class="absolute w-full h-full bg-orange-500/20 rounded-full animate-[ping_1.5s_infinite]"></div>';
+  }
+
+  return L.divIcon({
+    className: 'bg-transparent transition-all duration-100 linear',
+    html: `
+      <div class="w-full h-full relative flex items-center justify-center">
+        <div style="transform: rotate(${heading}deg); width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          
+          ${pulse}
+
+          <!-- Direction Arrow -->
+          <div class="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-b-[8px] ${arrowColor} mb-[2px]"></div>
+
+          <!-- Body -->
+          <div class="w-4 h-4 ${color} rounded-full border border-white/20 shadow-sm z-10"></div>
+          
+        </div>
+      </div>
+    `,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+  });
+};
+
 function MapController({ position, safeZone, isFollowing, setIsFollowing }: any) {
   const map = useMap();
   const lastSafeZone = useRef<Position | null>(null);
@@ -64,32 +92,36 @@ function MapController({ position, safeZone, isFollowing, setIsFollowing }: any)
     else if (isFollowing) {
       map.panTo([position.lat, position.lng], { animate: true, duration: 0.8 });
     }
-  }, [position, safeZone, map, isFollowing, setIsFollowing]);
-
+  }, [position, safeZone, map, isFollowing]);
   return null;
 }
 
 export default function GameComponent() {
   const { position, setManualPosition } = useGeolocation(ENABLE_DEBUG_MODE);
   
-  const [gameState, setGameState] = useState<'IDLE' | 'LOADING' | 'RUNNING' | 'WON' | 'GAME_OVER'>('IDLE');
+  const [gameState, setGameState] = useState<GameState>('IDLE');
   const [safeZone, setSafeZone] = useState<Position | null>(null);
-  const [distanceToTarget, setDistanceToTarget] = useState<number>(0);
-  const [zombies, setZombies] = useState<any[]>([]);
-  
-  // Camera State
+  const [initialSpawns, setInitialSpawns] = useState<any[]>([]);
+  const [roadData, setRoadData] = useState<RoadSegment[]>([]);
   const [isFollowing, setIsFollowing] = useState(true);
+
+  const handleGameOver = useCallback(() => {
+    setGameState((prev) => (prev === 'RUNNING' ? 'GAME_OVER' : prev));
+  }, []);
+
+  const liveZombies = useZombieAI(initialSpawns, roadData, position, safeZone, gameState, handleGameOver);
 
   const startGame = async (distanceKm: number) => {
     if (!position) return;
     setGameState('LOADING');
+
     const target = generateSafeZone(position.lat, position.lng, distanceKm);
     
     const roads = await fetchRoadsInArea(position.lat, position.lng, target.lat, target.lng);
     
     // Density: roughly 40 per km
     const zombieCount = Math.floor(distanceKm * 40);
-    const newZombies = spawnZombies(
+    const spawns = spawnZombies(
       roads, 
       zombieCount, 
       position.lat, 
@@ -99,34 +131,28 @@ export default function GameComponent() {
     );
 
     setSafeZone({ ...target, accuracy: 0, heading: 0 });
-    setZombies(newZombies);
+    setInitialSpawns(spawns);
     setGameState('RUNNING');
   };
 
   const resetGame = () => {
     setGameState('IDLE');
     setSafeZone(null);
-    setZombies([]);
+    setInitialSpawns([]);
+    setRoadData([]);
     setIsFollowing(true);
   };
 
   useEffect(() => {
     if (gameState === 'RUNNING' && position && safeZone) {
       const dist = getDistance(position.lat, position.lng, safeZone.lat, safeZone.lng);
-      setDistanceToTarget(dist);
-      if (dist < 50) {
-        setGameState('WON');
-        return;
-      }
-      
-      for (const z of zombies) {
-        if (getDistance(position.lat, position.lng, z.lat, z.lng) < 15) {
-          setGameState('GAME_OVER');
-          break;
-        }
-      }
+      if (dist < 50) setGameState('WON');
     }
-  }, [position, safeZone, gameState, zombies]);
+  }, [position, safeZone, gameState]);
+
+  const distanceToTarget = (position && safeZone) 
+    ? getDistance(position.lat, position.lng, safeZone.lat, safeZone.lng) 
+    : 0;
 
   return (
     <div className="h-full w-full relative bg-zinc-950">
@@ -160,8 +186,13 @@ export default function GameComponent() {
 
           <Marker position={[position.lat, position.lng]} icon={survivorIcon} />
           
-          {(gameState === 'RUNNING' || gameState === 'GAME_OVER') && zombies.map((z) => (
-            <Marker key={z.id} position={[z.lat, z.lng]} icon={zombieIcon} />
+          {(gameState === 'RUNNING' || gameState === 'GAME_OVER') && liveZombies.map((z) => (
+            <Marker 
+              key={z.id} 
+              position={[z.lat, z.lng]} 
+              icon={createZombieIcon(z.heading, z.state)} 
+              zIndexOffset={z.state === 'CHASE' ? 1000 : 0} 
+            />
           ))}
           
           {safeZone && (gameState === 'RUNNING' || gameState === 'WON' || gameState === 'GAME_OVER') && (
@@ -173,9 +204,7 @@ export default function GameComponent() {
                   fillColor: '#22c55e', 
                   fillOpacity: 0.2, 
                   color: '#22c55e', 
-                  weight: 2, 
-                  dashArray: '10, 10' 
-                }} 
+                  weight: 2 }}
               />
               {ENABLE_DEBUG_MODE && gameState !== 'WON' && (
                  <Polyline 
