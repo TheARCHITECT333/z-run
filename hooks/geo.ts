@@ -1,3 +1,4 @@
+import { ZOMBIE_TRAITS, ZombieType } from '@/config/ZombieTraits';
 export type Point = { lat: number; lng: number };
 export type RoadSegment = Point[];
 /**
@@ -89,7 +90,13 @@ export async function fetchRoadsInArea(startLat: number, startLng: number, endLa
   }
 }
 
-export type ZombieSpawn = { id: number; lat: number; lng: number; segmentId: number };
+export type ZombieSpawn = { 
+  id: string; 
+  lat: number; 
+  lng: number; 
+  segmentId: number; 
+  type: ZombieType;
+};
 
 export function spawnZombies(
   segments: RoadSegment[], 
@@ -103,6 +110,22 @@ export function spawnZombies(
   const PLAYER_BUFFER = 50; 
   const SAFE_ZONE_BUFFER = 60;
   
+  const typeList = Object.keys(ZOMBIE_TRAITS) as ZombieType[];
+  const weightedList: { type: ZombieType; weight: number }[] = typeList.map(t => ({
+    type: t,
+    weight: ZOMBIE_TRAITS[t].spawnWeight
+  }));
+
+  const getRandomType = () => {
+    const total = weightedList.reduce((acc, t) => acc + t.weight, 0);
+    let random = Math.random() * total;
+    for (const t of weightedList) {
+      if (random < t.weight) return t.type;
+      random -= t.weight;
+    }
+    return 'WALKER';
+  };
+  
   if (segments.length > 0) {
     let attempts = 0;
     while (zombies.length < count && attempts < count * 20) {
@@ -115,9 +138,37 @@ export function spawnZombies(
       if (getDistance(endLat, endLng, point.lat, point.lng) < SAFE_ZONE_BUFFER) continue;
       if (zombies.some(z => z.lat === point.lat && z.lng === point.lng)) continue;
 
-      zombies.push({ id: Math.random(), lat: point.lat, lng: point.lng, segmentId: segIndex });
+      const type = getRandomType();
+      
+      // Twins Logic
+      if ((type === 'WALKER' || type === 'SPRINTER') && Math.random() < 0.2) {
+         zombies.push({ id: `twin-a-${Math.random()}`, lat: point.lat, lng: point.lng, segmentId: segIndex, type });
+         zombies.push({ id: `twin-b-${Math.random()}`, lat: point.lat + 0.00005, lng: point.lng + 0.00005, segmentId: segIndex, type });
+      } else {
+         zombies.push({ id: `z-${Math.random()}`, lat: point.lat, lng: point.lng, segmentId: segIndex, type });
+      }
+    }
+  } 
+  else {
+    const minLat = Math.min(startLat, endLat);
+    const maxLat = Math.max(startLat, endLat);
+    const minLng = Math.min(startLng, endLng);
+    const maxLng = Math.max(startLng, endLng);
+
+    let attempts = 0;
+    while (zombies.length < count && attempts < count * 20) {
+      attempts++;
+      const lat = minLat + Math.random() * (maxLat - minLat);
+      const lng = minLng + Math.random() * (maxLng - minLng);
+      
+      if (getDistance(startLat, startLng, lat, lng) < PLAYER_BUFFER) continue;
+      if (getDistance(endLat, endLng, lat, lng) < SAFE_ZONE_BUFFER) continue;
+
+      const type = getRandomType();
+      zombies.push({ id: `z-fallback-${Math.random()}`, lat, lng, segmentId: -1, type });
     }
   }
+
   return zombies;
 }
 
@@ -135,6 +186,7 @@ export function isPointOnRoad(lat: number, lng: number, roads: RoadSegment[], th
 }
 
 export function isLineClear(startLat: number, startLng: number, endLat: number, endLng: number, roads: RoadSegment[]): boolean {
+  if (roads.length === 0) return true;
   const dist = getDistance(startLat, startLng, endLat, endLng);
   const steps = Math.ceil(dist / 10);
   
@@ -142,7 +194,7 @@ export function isLineClear(startLat: number, startLng: number, endLat: number, 
     const t = i / steps;
     const lat = startLat + (endLat - startLat) * t;
     const lng = startLng + (endLng - startLng) * t;
-    
+
     if (!isPointOnRoad(lat, lng, roads, 12)) {
       return false;
     }
@@ -151,6 +203,7 @@ export function isLineClear(startLat: number, startLng: number, endLat: number, 
 }
 
 export function snapToNetwork(lat: number, lng: number, roads: RoadSegment[]): { lat: number, lng: number } {
+  if (roads.length === 0) return { lat, lng };
   let bestPoint = { lat, lng };
   let minDistance = Infinity;
 

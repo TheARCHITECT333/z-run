@@ -1,28 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
-import { getDistance, RoadSegment, snapToNetwork, isLineClear } from '@/hooks/geo';
-import { getBearing, movePoint } from '@/hooks/ai';
+import { getDistance, RoadSegment, snapToNetwork, isLineClear, ZombieSpawn } from '@/hooks/geo';
+import { getBearing, movePoint, isTargetInSight } from '@/hooks/ai';
+import { ZOMBIE_TRAITS, ZombieType } from '@/config/ZombieTraits';
 
-export interface ZombieState {
-  id: number;
-  lat: number;
-  lng: number;
+export interface ZombieState extends ZombieSpawn {
   heading: number; 
-  state: 'IDLE' | 'CHASE' | 'SEARCHING';
-  type: 'WALKER' | 'RUNNER'; 
+  state: 'IDLE' | 'CHASE' | 'SEARCHING' | 'SCREAMING' | 'FROZEN';
   speed: number;
-  segmentId: number; 
   targetWaypoint: { lat: number, lng: number } | null;
   lastKnownPos: { lat: number, lng: number } | null;
+  internalTimer: number; 
+  stamina: number; 
 }
 
-// Zombie
-const VISION_RANGE = 250;
-const PROXIMITY_RANGE = 100;
-const VISION_FOV = 90;
-const TURN_RATE = 150;
-
 export function useZombieAI(
-  initialZombies: any[], 
+  initialZombies: ZombieSpawn[], 
   roadData: RoadSegment[],
   playerPos: { lat: number, lng: number } | null, 
   safeZone: { lat: number, lng: number } | null,
@@ -32,6 +24,7 @@ export function useZombieAI(
   const [zombies, setZombies] = useState<ZombieState[]>([]);
   
   const playerPosRef = useRef(playerPos);
+  const lastPlayerPosRef = useRef(playerPos);
   const safeZoneRef = useRef(safeZone);
   const roadsRef = useRef(roadData);
   const zombiesRef = useRef<ZombieState[]>([]); 
@@ -48,10 +41,11 @@ export function useZombieAI(
         ...z,
         heading: Math.random() * 360,
         state: 'IDLE',
-        type: Math.random() > 0.8 ? 'RUNNER' : 'WALKER',
-        speed: Math.random() > 0.8 ? 5.2 : 2.4,
+        speed: ZOMBIE_TRAITS[z.type].baseSpeed,
         targetWaypoint: null,
-        lastKnownPos: null
+        lastKnownPos: null,
+        internalTimer: Math.random() * 5,
+        stamina: 100
       }));
       setZombies(enhanced);
       zombiesRef.current = enhanced;
@@ -68,21 +62,36 @@ export function useZombieAI(
       if (lastTimeRef.current !== 0) {
         const deltaTime = (time - lastTimeRef.current) / 1000;
         const currentPlayer = playerPosRef.current;
+        const lastPlayer = lastPlayerPosRef.current;
         const currentSafeZone = safeZoneRef.current;
         const currentRoads = roadsRef.current;
 
+        let playerSpeed = 0;
+        if (currentPlayer && lastPlayer) {
+           playerSpeed = getDistance(currentPlayer.lat, currentPlayer.lng, lastPlayer.lat, lastPlayer.lng) / deltaTime;
+        }
+
         if (currentPlayer) {
+          // HORDE ALERT SYSTEM
+          const activeScreamers: {lat: number, lng: number}[] = [];
+          zombiesRef.current.forEach(z => {
+             if (z.type === 'SCREAMER' && z.state === 'SCREAMING') {
+                activeScreamers.push({ lat: z.lat, lng: z.lng });
+             }
+          });
+
           const updatedZombies = zombiesRef.current.map(z => {
-            let { lat, lng, heading, state, type, speed, targetWaypoint, segmentId, lastKnownPos } = z;
+            let { lat, lng, heading, state, type, speed, targetWaypoint, segmentId, lastKnownPos, internalTimer, stamina } = z;
             
+            const traits = ZOMBIE_TRAITS[type];
             const distToPlayer = getDistance(lat, lng, currentPlayer.lat, currentPlayer.lng);
 
             const bearingToPlayer = getBearing(lat, lng, currentPlayer.lat, currentPlayer.lng);
             let angleDiff = Math.abs(bearingToPlayer - heading);
             if (angleDiff > 180) angleDiff = 360 - angleDiff;
 
-            const inProximity = distToPlayer < PROXIMITY_RANGE; 
-            const inVisionCone = distToPlayer < VISION_RANGE && angleDiff < (VISION_FOV / 2);
+            const inProximity = distToPlayer < traits.proximityRange; 
+            const inVisionCone = distToPlayer < traits.detectionRange && angleDiff < (traits.fov / 2);
             
             let hasLineOfSight = false;
             if (inVisionCone) {
@@ -91,37 +100,94 @@ export function useZombieAI(
 
             const canSensePlayer = inProximity || hasLineOfSight;
 
-            if (state !== 'CHASE' && canSensePlayer) {
-              state = 'CHASE';
-              speed = type === 'RUNNER' ? 50.0 : 10.0; // Aggro speed
+            if (state === 'IDLE' && type !== 'SCREAMER') {
+              for (const screamerPos of activeScreamers) {
+                const distToScreamer = getDistance(lat, lng, screamerPos.lat, screamerPos.lng);
+                if (distToScreamer < 500) {
+                  state = 'SEARCHING';
+                  targetWaypoint = { ...currentPlayer };
+                  break;
+                }
+              }
+            }
+
+            if (state !== 'CHASE' && state !== 'SCREAMING' && canSensePlayer) {
+              if (type === 'SCREAMER') {
+                state = 'SCREAMING';
+                speed = 0; 
+              } else {
+                state = 'CHASE';
+              }
             }
             else if (state === 'CHASE') {
-              if (!canSensePlayer) {
-                state = 'SEARCHING';
-                targetWaypoint = { ...currentPlayer }; 
+              if (type === 'ENDURANCE') {
+                 if (!canSensePlayer && distToPlayer > 150) state = 'IDLE'; 
+                 else lastKnownPos = { ...currentPlayer };
               } else {
-                 lastKnownPos = { ...currentPlayer };
+                 if (!canSensePlayer) {
+                   state = 'SEARCHING';
+                   targetWaypoint = { ...currentPlayer }; 
+                 } else {
+                   lastKnownPos = { ...currentPlayer };
+                 }
               }
             }
             else if (state === 'SEARCHING') {
-               if (targetWaypoint && getDistance(lat, lng, targetWaypoint.lat, targetWaypoint.lng) < 5) {
-                 state = 'IDLE';
+               if (canSensePlayer) {
+                 state = 'CHASE';
+               }
+               else if (targetWaypoint && getDistance(lat, lng, targetWaypoint.lat, targetWaypoint.lng) < 5) {
+                 state = 'IDLE'; 
                  targetWaypoint = null;
                }
             }
-            
+
+            internalTimer += deltaTime;
+
+            if (type === 'BURST') {
+              const cycle = internalTimer % 4;
+              if (cycle < 2) state = 'FROZEN';
+              else if (state === 'FROZEN') state = 'IDLE'; 
+            }
+
+            if (type === 'SPRINTER' && state === 'CHASE') {
+               if (stamina > 0) {
+                 speed = traits.chaseSpeed; 
+                 stamina -= deltaTime * 30; 
+               } else {
+                 speed = 1.5; 
+                 stamina -= deltaTime * 5; 
+                 if (stamina < -20) stamina = 100; 
+               }
+            } else if (type === 'SPRINTER') {
+               stamina = 100;
+            }
+
+            if (type === 'STAGGERER') {
+               if (Math.floor(internalTimer * 2) > Math.floor((internalTimer - deltaTime) * 2)) {
+                  speed = 0.5 + Math.random() * traits.chaseSpeed;
+               }
+            }
+
+            if (type === 'SYNC') {
+               if (playerSpeed < 0.5) speed = 0;
+               else speed = traits.chaseSpeed;
+            }
+
             let desiredHeading = heading;
             let moveSpeed = speed;
 
+            if (!['SPRINTER', 'BURST', 'STAGGERER', 'SYNC'].includes(type)) {
+               moveSpeed = state === 'CHASE' ? traits.chaseSpeed : traits.baseSpeed;
+            }
+            if (state === 'SCREAMING' || state === 'FROZEN') moveSpeed = 0;
+
             if (state === 'CHASE') {
               desiredHeading = getBearing(lat, lng, currentPlayer.lat, currentPlayer.lng);
-            } 
-            else if (state === 'SEARCHING' && targetWaypoint) {
+            } else if (state === 'SEARCHING' && targetWaypoint) {
               desiredHeading = getBearing(lat, lng, targetWaypoint.lat, targetWaypoint.lng);
-              moveSpeed = type === 'RUNNER' ? 3.5 : 1.5; 
-            } 
-            else {
-               moveSpeed = type === 'RUNNER' ? 2.0 : 0.8; 
+              if (moveSpeed < traits.chaseSpeed * 0.7) moveSpeed = traits.chaseSpeed * 0.7;
+            } else if (state === 'IDLE') {
                if (!targetWaypoint || getDistance(lat, lng, targetWaypoint.lat, targetWaypoint.lng) < 3) {
                  if (currentRoads[segmentId]) {
                    const road = currentRoads[segmentId];
@@ -136,7 +202,7 @@ export function useZombieAI(
             let deltaAngle = desiredHeading - heading;
             if (deltaAngle > 180) deltaAngle -= 360;
             if (deltaAngle < -180) deltaAngle += 360;
-            const maxTurn = TURN_RATE * deltaTime;
+            const maxTurn = traits.turnRate * deltaTime;
             if (Math.abs(deltaAngle) < maxTurn) heading = desiredHeading;
             else heading += Math.sign(deltaAngle) * maxTurn;
             heading = (heading + 360) % 360;
@@ -145,14 +211,14 @@ export function useZombieAI(
 
             const moveDist = moveSpeed * deltaTime;
             const rawNextPos = movePoint(lat, lng, moveDist, heading);
-
+            
             let snappedPos = rawNextPos;
 
             if (currentRoads.length > 0) {
                snappedPos = snapToNetwork(rawNextPos.lat, rawNextPos.lng, currentRoads);
 
                if (getDistance(rawNextPos.lat, rawNextPos.lng, snappedPos.lat, snappedPos.lng) > 5) {
-                  snappedPos = { lat, lng }; 
+                  snappedPos = { lat, lng };
                }
             }
 
@@ -166,11 +232,12 @@ export function useZombieAI(
               }
             }
 
-            return { ...z, lat: snappedPos.lat, lng: snappedPos.lng, heading, state, speed: moveSpeed, targetWaypoint, lastKnownPos, segmentId };
+            return { ...z, lat: snappedPos.lat, lng: snappedPos.lng, heading, state, speed: moveSpeed, targetWaypoint, lastKnownPos, segmentId, internalTimer, stamina };
           });
 
           zombiesRef.current = updatedZombies;
           setZombies(updatedZombies);
+          lastPlayerPosRef.current = currentPlayer;
         }
       }
       

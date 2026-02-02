@@ -4,10 +4,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, useMap, Circle, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { useGeolocation, Position } from '@/hooks/useGeolocation';
-import { useZombieAI } from '@/hooks/useZombieAI';
+import { useZombieAI, ZombieState } from '@/hooks/useZombieAI';
 import DebugJoystick from '../UI/DebugJoystick';
 import GameOverlay, { GameState } from '../UI/GameOverlay';
 import { generateSafeZone, fetchRoadsInArea, spawnZombies, getDistance, RoadSegment } from '@/hooks/geo';
+import { ZOMBIE_TRAITS } from '@/config/ZombieTraits';
 
 const ENABLE_DEBUG_MODE = true; 
 
@@ -24,19 +25,20 @@ const survivorIcon = L.divIcon({
   iconAnchor: [24, 24],
 });
 
-const createZombieIcon = (heading: number, state: 'IDLE' | 'CHASE' | 'SEARCHING') => {
-  let color = 'bg-zinc-700';
-  let arrowColor = 'border-b-zinc-700';
+const createZombieIcon = (heading: number, z: ZombieState) => {
+  const isChasing = z.state === 'CHASE';
+  const traits = ZOMBIE_TRAITS[z.type];
+  
+  let color = traits.colorClass;
+  let arrowColor = traits.arrowColorClass;
   let pulse = '';
 
-  if (state === 'CHASE') {
+  if (isChasing) {
     color = 'bg-red-600';
     arrowColor = 'border-b-red-600';
     pulse = '<div class="absolute w-full h-full bg-red-500/40 rounded-full animate-ping"></div>';
-  } else if (state === 'SEARCHING') {
-    color = 'bg-orange-500';
-    arrowColor = 'border-b-orange-500';
-    pulse = '<div class="absolute w-full h-full bg-orange-500/20 rounded-full animate-[ping_1.5s_infinite]"></div>';
+  } else if (z.state === 'SCREAMING') {
+    pulse = '<div class="absolute w-full h-full bg-yellow-500/40 rounded-full animate-[ping_0.5s_infinite]"></div>';
   }
 
   return L.divIcon({
@@ -61,35 +63,31 @@ const createZombieIcon = (heading: number, state: 'IDLE' | 'CHASE' | 'SEARCHING'
   });
 };
 
-function MapController({ position, safeZone, isFollowing, setIsFollowing }: any) {
+function MapController({ position, safeZone, isFollowing, setIsFollowing, onMapClick }: any) {
   const map = useMap();
   const lastSafeZone = useRef<Position | null>(null);
   const isFirstLoad = useRef(true);
 
-  useMapEvents({
-    dragstart: () => setIsFollowing(false),
-    zoomstart: () => setIsFollowing(false), 
+  useMapEvents({ 
+    dragstart: () => setIsFollowing(false), 
+    zoomstart: () => setIsFollowing(false),
+    click: () => onMapClick && onMapClick() 
   });
 
   useEffect(() => {
 
     if (isFirstLoad.current) {
-      map.setMinZoom(12);
-      map.setMaxZoom(18);
+      map.setMinZoom(14);
+      map.setMaxZoom(19);
       isFirstLoad.current = false;
     }
 
     if (safeZone && safeZone !== lastSafeZone.current) {
-      const bounds = L.latLngBounds(
-        [position.lat, position.lng],
-        [safeZone.lat, safeZone.lng]
-      );
+      const bounds = L.latLngBounds([position.lat, position.lng], [safeZone.lat, safeZone.lng]);
       map.fitBounds(bounds, { padding: [80, 80], animate: true, duration: 1.5 });
       setIsFollowing(false);
       lastSafeZone.current = safeZone;
-    } 
-    
-    else if (isFollowing) {
+    } else if (isFollowing) {
       map.panTo([position.lat, position.lng], { animate: true, duration: 0.8 });
     }
   }, [position, safeZone, map, isFollowing]);
@@ -98,12 +96,13 @@ function MapController({ position, safeZone, isFollowing, setIsFollowing }: any)
 
 export default function GameComponent() {
   const { position, setManualPosition } = useGeolocation(ENABLE_DEBUG_MODE);
-  
+
   const [gameState, setGameState] = useState<GameState>('IDLE');
   const [safeZone, setSafeZone] = useState<Position | null>(null);
   const [initialSpawns, setInitialSpawns] = useState<any[]>([]);
   const [roadData, setRoadData] = useState<RoadSegment[]>([]);
   const [isFollowing, setIsFollowing] = useState(true);
+  const [selectedZombie, setSelectedZombie] = useState<ZombieState | null>(null);
 
   const handleGameOver = useCallback(() => {
     setGameState((prev) => (prev === 'RUNNING' ? 'GAME_OVER' : prev));
@@ -141,6 +140,7 @@ export default function GameComponent() {
     setInitialSpawns([]);
     setRoadData([]);
     setIsFollowing(true);
+    setSelectedZombie(null);
   };
 
   useEffect(() => {
@@ -182,6 +182,7 @@ export default function GameComponent() {
             safeZone={safeZone} 
             isFollowing={isFollowing}
             setIsFollowing={setIsFollowing}
+            onMapClick={() => setSelectedZombie(null)}
           />
 
           <Marker position={[position.lat, position.lng]} icon={survivorIcon} />
@@ -190,8 +191,14 @@ export default function GameComponent() {
             <Marker 
               key={z.id} 
               position={[z.lat, z.lng]} 
-              icon={createZombieIcon(z.heading, z.state)} 
+              icon={createZombieIcon(z.heading, z)} 
               zIndexOffset={z.state === 'CHASE' ? 1000 : 0} 
+              eventHandlers={{
+                click: (e) => {
+                  L.DomEvent.stopPropagation(e);
+                  setSelectedZombie(z);
+                }
+              }}
             />
           ))}
           
@@ -218,13 +225,54 @@ export default function GameComponent() {
         </MapContainer>
       )}
 
-      {/* RECENTER BUTTON */}
+      {selectedZombie && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-[2000] w-[90%] max-w-sm bg-zinc-900/95 backdrop-blur-md border border-zinc-700 rounded-xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-4 flex flex-col">
+          <div className="relative h-40 w-full bg-zinc-800">
+            <img 
+              src={ZOMBIE_TRAITS[selectedZombie.type].image} 
+              alt={selectedZombie.type}
+              className="w-full h-full object-cover opacity-90"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent"></div>
+            
+            <button 
+              onClick={() => setSelectedZombie(null)}
+              className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 backdrop-blur flex items-center justify-center text-white hover:bg-black/80 transition-colors z-20"
+            >
+              ×
+            </button>
+
+            <div className="absolute bottom-3 left-4">
+              <h3 className="text-white font-black text-3xl uppercase tracking-tighter italic drop-shadow-md">
+                {ZOMBIE_TRAITS[selectedZombie.type].name}
+              </h3>
+            </div>
+          </div>
+
+          <div className="p-5 pt-3">
+            <div className="flex items-center gap-3 mb-4">
+               <div className={`w-3 h-3 rounded-full ${ZOMBIE_TRAITS[selectedZombie.type].colorClass} shadow-[0_0_8px_currentColor]`}></div>
+               
+               <div className="flex gap-2 text-[10px] font-mono uppercase text-zinc-400">
+                  <span className={`px-2 py-0.5 rounded ${selectedZombie.state === 'CHASE' ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-zinc-800'}`}>
+                    {selectedZombie.state}
+                  </span>
+                  <span className="bg-zinc-800 px-2 py-0.5 rounded">
+                    Speed: {selectedZombie.speed.toFixed(1)}m/s
+                  </span>
+               </div>
+            </div>
+            
+            <p className="text-sm text-zinc-300 leading-relaxed border-t border-white/10 pt-3 font-light">
+              {ZOMBIE_TRAITS[selectedZombie.type].description}
+            </p>
+          </div>
+        </div>
+      )}
+
       {!isFollowing && position && (
-        <div className="absolute bottom-8 right-6 z-[1000] animate-in fade-in duration-200">
-           <button 
-             onClick={() => setIsFollowing(true)}
-             className="w-14 h-14 bg-zinc-900/90 backdrop-blur-md text-white rounded-full flex items-center justify-center shadow-2xl border border-zinc-700 active:scale-95 transition-all"
-           >
+        <div className="absolute bottom-8 right-6 z-[1000] animate-in fade-in">
+           <button onClick={() => setIsFollowing(true)} className="w-14 h-14 bg-zinc-900/90 text-white rounded-full flex items-center justify-center border border-zinc-700 shadow-xl">
              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
