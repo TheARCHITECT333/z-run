@@ -25,6 +25,15 @@ const survivorIcon = L.divIcon({
   iconAnchor: [24, 24],
 });
 
+const ghostTargetIcon = L.divIcon({
+  className: 'bg-transparent',
+  html: `<div class="w-full h-full flex items-center justify-center animate-bounce">
+      <div class="text-4xl filter drop-shadow-lg">📍</div>
+    </div>`,
+  iconSize: [40, 40],
+  iconAnchor: [20, 38],
+});
+
 const createZombieIcon = (heading: number, z: ZombieState) => {
   const isChasing = z.state === 'CHASE';
   const traits = ZOMBIE_TRAITS[z.type];
@@ -63,34 +72,31 @@ const createZombieIcon = (heading: number, z: ZombieState) => {
   });
 };
 
-function MapController({ position, safeZone, isFollowing, setIsFollowing, onMapClick }: any) {
+function MapController({ position, safeZone, gameState, selectedRadius, onMapClick }: any) {
   const map = useMap();
-  const lastSafeZone = useRef<Position | null>(null);
   const isFirstLoad = useRef(true);
+  const zoomedToSelection = useRef(false);
 
   useMapEvents({ 
-    dragstart: () => setIsFollowing(false), 
-    zoomstart: () => setIsFollowing(false),
-    click: () => onMapClick && onMapClick() 
+    click: (e) => onMapClick && onMapClick(e.latlng) 
   });
 
   useEffect(() => {
-
-    if (isFirstLoad.current) {
-      map.setMinZoom(14);
-      map.setMaxZoom(19);
+    if (isFirstLoad.current && position) {
+      map.setView([position.lat, position.lng], 16);
       isFirstLoad.current = false;
     }
 
-    if (safeZone && safeZone !== lastSafeZone.current) {
-      const bounds = L.latLngBounds([position.lat, position.lng], [safeZone.lat, safeZone.lng]);
-      map.fitBounds(bounds, { padding: [80, 80], animate: true, duration: 1.5 });
-      setIsFollowing(false);
-      lastSafeZone.current = safeZone;
-    } else if (isFollowing) {
-      map.panTo([position.lat, position.lng], { animate: true, duration: 0.8 });
+    if (gameState === 'SELECTING' && selectedRadius && !zoomedToSelection.current) {
+      map.setZoom(selectedRadius > 2 ? 13 : 14);
+      zoomedToSelection.current = true;
     }
-  }, [position, safeZone, map, isFollowing]);
+    
+    if (gameState !== 'SELECTING') {
+      zoomedToSelection.current = false;
+    }
+  }, [position, map, gameState, selectedRadius]);
+
   return null;
 }
 
@@ -98,11 +104,14 @@ export default function GameComponent() {
   const { position, setManualPosition } = useGeolocation(ENABLE_DEBUG_MODE);
 
   const [gameState, setGameState] = useState<GameState>('IDLE');
+  const [gameMode, setGameMode] = useState<'RANDOM' | 'CUSTOM'>('RANDOM');
   const [safeZone, setSafeZone] = useState<Position | null>(null);
   const [initialSpawns, setInitialSpawns] = useState<any[]>([]);
   const [roadData, setRoadData] = useState<RoadSegment[]>([]);
   const [isFollowing, setIsFollowing] = useState(true);
   const [selectedZombie, setSelectedZombie] = useState<ZombieState | null>(null);
+  const [selectedRadiusKm, setSelectedRadiusKm] = useState<number>(0);
+  const [tempTarget, setTempTarget] = useState<Position | null>(null);
 
   const handleGameOver = useCallback(() => {
     setGameState((prev) => (prev === 'RUNNING' ? 'GAME_OVER' : prev));
@@ -110,38 +119,87 @@ export default function GameComponent() {
 
   const liveZombies = useZombieAI(initialSpawns, roadData, position, safeZone, gameState, handleGameOver);
 
-  const startGame = async (distanceKm: number) => {
+  const handleModeSelect = (mode: 'RANDOM' | 'CUSTOM') => {
+    setGameMode(mode);
+    setGameState('MODE_SELECT');
+  };
+
+  const handleRadiusSelect = async (km: number) => {
+    setSelectedRadiusKm(km);
+    if (gameMode === 'CUSTOM') {
+      setGameState('SELECTING'); 
+    } else {
+      await startRandomGame(km);
+    }
+  };
+
+  const startRandomGame = async (distanceKm: number) => {
     if (!position) return;
     setGameState('LOADING');
 
     const target = generateSafeZone(position.lat, position.lng, distanceKm);
-    
+    await initializeGameWorld(target, distanceKm);
+  };
+
+  const confirmCustomTarget = async () => {
+    if (!position || !tempTarget) return;
+    setGameState('LOADING');
+    const distKm = getDistance(position.lat, position.lng, tempTarget.lat, tempTarget.lng) / 1000;
+    await initializeGameWorld(tempTarget, distKm);
+  };
+
+  const initializeGameWorld = async (target: Position, distanceKm: number) => {
+    if (!position) return;
+
     const roads = await fetchRoadsInArea(position.lat, position.lng, target.lat, target.lng);
+    setRoadData(roads);
     
-    // Density: roughly 40 per km
-    const zombieCount = Math.floor(distanceKm * 40);
-    const spawns = spawnZombies(
-      roads, 
-      zombieCount, 
-      position.lat, 
-      position.lng,
-      target.lat,
-      target.lng
-    );
+    const zombieCount = Math.floor(distanceKm * 40); 
+    const spawns = spawnZombies(roads, zombieCount, position.lat, position.lng, target.lat, target.lng);
 
     setSafeZone({ ...target, accuracy: 0, heading: 0 });
     setInitialSpawns(spawns);
     setGameState('RUNNING');
+    setIsFollowing(true);
   };
 
-  const resetGame = () => {
+  const handleRestart = async () => {
+    if (gameMode === 'CUSTOM' && safeZone) {
+       setGameState('LOADING');
+       const distKm = getDistance(position!.lat, position!.lng, safeZone.lat, safeZone.lng) / 1000;
+       await initializeGameWorld(safeZone, distKm);
+    } else {
+       await startRandomGame(selectedRadiusKm);
+    }
+  };
+
+  const handleReset = () => {
     setGameState('IDLE');
     setSafeZone(null);
+    setTempTarget(null);
     setInitialSpawns([]);
     setRoadData([]);
     setIsFollowing(true);
     setSelectedZombie(null);
   };
+
+  const handleMapClick = (latlng: { lat: number, lng: number }) => {
+    if (gameState === 'SELECTING') {
+      setTempTarget({ ...latlng, accuracy: 0, heading: 0 });
+    } else {
+      setSelectedZombie(null);
+    }
+  };
+
+  const mapRef = useRef<L.Map | null>(null);
+  useEffect(() => {
+    if (!mapRef.current || !position) return;
+    if (gameState !== 'RUNNING' && gameState !== 'LOADING') return;
+
+    if (isFollowing) {
+      mapRef.current.panTo([position.lat, position.lng], { animate: true, duration: 0.8 });
+    }
+  }, [position, isFollowing, gameState]);
 
   useEffect(() => {
     if (gameState === 'RUNNING' && position && safeZone) {
@@ -153,6 +211,10 @@ export default function GameComponent() {
   const distanceToTarget = (position && safeZone) 
     ? getDistance(position.lat, position.lng, safeZone.lat, safeZone.lng) 
     : 0;
+  
+  const tempDist = (position && tempTarget)
+    ? getDistance(position.lat, position.lng, tempTarget.lat, tempTarget.lng)
+    : 0;
 
   return (
     <div className="h-full w-full relative bg-zinc-950">
@@ -160,8 +222,13 @@ export default function GameComponent() {
       <GameOverlay 
         gameState={gameState} 
         distanceToTarget={distanceToTarget}
-        onStart={startGame}
-        onReset={resetGame}
+        onSelectMode={handleModeSelect}
+        onSelectRadius={handleRadiusSelect}
+        onConfirmTarget={confirmCustomTarget}
+        onCancelSelection={handleReset}
+        onReset={handleReset} 
+        onRestart={handleRestart}
+        tempTargetDistance={tempDist}
       />
 
       {position && (
@@ -171,6 +238,7 @@ export default function GameComponent() {
           zoomControl={false}
           className="h-full w-full"
           style={{ background: '#09090b' }}
+          ref={mapRef}
         >
           <TileLayer
             attribution='&copy; CARTO'
@@ -180,12 +248,19 @@ export default function GameComponent() {
           <MapController 
             position={position} 
             safeZone={safeZone} 
-            isFollowing={isFollowing}
-            setIsFollowing={setIsFollowing}
-            onMapClick={() => setSelectedZombie(null)}
+            gameState={gameState}
+            selectedRadius={selectedRadiusKm}
+            onMapClick={handleMapClick}
           />
 
           <Marker position={[position.lat, position.lng]} icon={survivorIcon} />
+
+          {gameState === 'SELECTING' && (
+            <Circle center={[position.lat, position.lng]} radius={selectedRadiusKm * 1000} pathOptions={{ color: '#facc15', fillColor: 'transparent', dashArray: '20, 20', weight: 2, opacity: 0.5 }} />
+          )}
+          {gameState === 'SELECTING' && tempTarget && (
+            <Marker position={[tempTarget.lat, tempTarget.lng]} icon={ghostTargetIcon} />
+          )}
           
           {(gameState === 'RUNNING' || gameState === 'GAME_OVER') && liveZombies.map((z) => (
             <Marker 
@@ -270,7 +345,7 @@ export default function GameComponent() {
         </div>
       )}
 
-      {!isFollowing && position && (
+      {!isFollowing && position && gameState === 'RUNNING' && (
         <div className="absolute bottom-8 right-6 z-[1000] animate-in fade-in">
            <button onClick={() => setIsFollowing(true)} className="w-14 h-14 bg-zinc-900/90 text-white rounded-full flex items-center justify-center border border-zinc-700 shadow-xl">
              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -282,7 +357,7 @@ export default function GameComponent() {
       )}
 
       {/* JOYSTICK */}
-      {ENABLE_DEBUG_MODE && position && gameState === 'RUNNING' && (
+      {ENABLE_DEBUG_MODE && position && (gameState === 'RUNNING' || gameState === 'SELECTING') && (
         <DebugJoystick 
           currentPosition={position} 
           onMove={(newPos) => setManualPosition(newPos)} 

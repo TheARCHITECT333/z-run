@@ -103,7 +103,7 @@ export function useZombieAI(
             if (state === 'IDLE' && type !== 'SCREAMER') {
               for (const screamerPos of activeScreamers) {
                 const distToScreamer = getDistance(lat, lng, screamerPos.lat, screamerPos.lng);
-                if (distToScreamer < 500) {
+                if (distToScreamer < 1000) {
                   state = 'SEARCHING';
                   targetWaypoint = { ...currentPlayer };
                   break;
