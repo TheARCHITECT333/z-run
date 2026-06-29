@@ -112,6 +112,15 @@ export default function GameComponent() {
   const [selectedZombie, setSelectedZombie] = useState<ZombieState | null>(null);
   const [selectedRadiusKm, setSelectedRadiusKm] = useState<number>(0);
   const [tempTarget, setTempTarget] = useState<Position | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const runStartRef = useRef<number>(0);
+
+  // Live survival clock; freezes naturally once we leave RUNNING.
+  useEffect(() => {
+    if (gameState !== 'RUNNING') return;
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - runStartRef.current) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [gameState]);
 
   const handleGameOver = useCallback(() => {
     setGameState((prev) => (prev === 'RUNNING' ? 'GAME_OVER' : prev));
@@ -159,6 +168,8 @@ export default function GameComponent() {
 
     setSafeZone({ ...target, accuracy: 0, heading: 0 });
     setInitialSpawns(spawns);
+    runStartRef.current = Date.now();
+    setElapsed(0);
     setGameState('RUNNING');
     setIsFollowing(true);
   };
@@ -229,6 +240,8 @@ export default function GameComponent() {
         onReset={handleReset} 
         onRestart={handleRestart}
         tempTargetDistance={tempDist}
+        hordeSize={initialSpawns.length}
+        survivalSeconds={elapsed}
       />
 
       {position && (
@@ -318,7 +331,8 @@ export default function GameComponent() {
             </button>
 
             <div className="absolute bottom-3 left-4">
-              <h3 className="text-white font-black text-3xl uppercase tracking-tighter italic drop-shadow-md">
+              <p className="font-mono text-[9px] uppercase tracking-[0.3em] text-red-400">Threat profile</p>
+              <h3 className="text-white font-black text-3xl uppercase tracking-tighter drop-shadow-md">
                 {ZOMBIE_TRAITS[selectedZombie.type].name}
               </h3>
             </div>

@@ -57,7 +57,7 @@ export async function fetchRoadsInArea(startLat: number, startLng: number, endLa
   const maxLng = Math.max(startLng, endLng) + pad;
 
   const query = `
-    [out:json][timeout:10];
+    [out:json][timeout:25];
     (
       way["highway"](${minLat},${minLng},${maxLat},${maxLng});
     );
@@ -66,28 +66,44 @@ export async function fetchRoadsInArea(startLat: number, startLng: number, endLa
     out skel qt;
   `;
 
-  try {
-    const response = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
-    if (!response.ok) throw new Error("Overpass API failed");
+  // Multiple mirrors + a client-side timeout so a slow/blocked request in one
+  // browser (e.g. Firefox tracking protection) doesn't silently fall back to
+  // road-less spawning, which behaves very differently. Try each until one works.
+  const ENDPOINTS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  ];
 
-    const data = await response.json();
-    
-    const nodeMap: Record<number, Point> = {};
-    data.elements.forEach((el: any) => {
-      if (el.type === 'node') nodeMap[el.id] = { lat: el.lat, lng: el.lon };
-    });
-    const segments: RoadSegment[] = [];
-    data.elements.forEach((el: any) => {
-      if (el.type === 'way' && el.nodes && el.nodes.length > 1) {
-        const path = el.nodes.map((id: number) => nodeMap[id]).filter(Boolean);
-        if (path.length > 1) segments.push(path);
-      }
-    });
-    return segments;
-  } catch (error) {
-    console.warn("Road fetch failed:", error);
-    return [];
+  for (const url of ENDPOINTS) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const response = await fetch(`${url}?data=${encodeURIComponent(query)}`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const data = await response.json();
+
+      const nodeMap: Record<number, Point> = {};
+      data.elements.forEach((el: any) => {
+        if (el.type === 'node') nodeMap[el.id] = { lat: el.lat, lng: el.lon };
+      });
+      const segments: RoadSegment[] = [];
+      data.elements.forEach((el: any) => {
+        if (el.type === 'way' && el.nodes && el.nodes.length > 1) {
+          const path = el.nodes.map((id: number) => nodeMap[id]).filter(Boolean);
+          if (path.length > 1) segments.push(path);
+        }
+      });
+      if (segments.length > 0) return segments;
+    } catch (error) {
+      console.warn(`Road fetch failed (${url}):`, error);
+    }
   }
+
+  console.warn("All road endpoints failed — falling back to off-road spawns.");
+  return [];
 }
 
 export type ZombieSpawn = { 
@@ -107,7 +123,7 @@ export function spawnZombies(
   endLng: number
 ): ZombieSpawn[] {
   const zombies: ZombieSpawn[] = [];
-  const PLAYER_BUFFER = 50; 
+  const PLAYER_BUFFER = 150; // min standoff so nothing spawns on top of you (was 50, felt "too close")
   const SAFE_ZONE_BUFFER = 60;
   
   const typeList = Object.keys(ZOMBIE_TRAITS) as ZombieType[];

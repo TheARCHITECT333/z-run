@@ -9,8 +9,9 @@ export interface ZombieState extends ZombieSpawn {
   speed: number;
   targetWaypoint: { lat: number, lng: number } | null;
   lastKnownPos: { lat: number, lng: number } | null;
-  internalTimer: number; 
-  stamina: number; 
+  internalTimer: number;
+  stamina: number;
+  searchAttempts: number; // re-homes left before giving up the hunt
 }
 
 export function useZombieAI(
@@ -45,7 +46,8 @@ export function useZombieAI(
         targetWaypoint: null,
         lastKnownPos: null,
         internalTimer: Math.random() * 5,
-        stamina: 100
+        stamina: 100,
+        searchAttempts: 0
       }));
       setZombies(enhanced);
       zombiesRef.current = enhanced;
@@ -81,7 +83,7 @@ export function useZombieAI(
           });
 
           const updatedZombies = zombiesRef.current.map(z => {
-            let { lat, lng, heading, state, type, speed, targetWaypoint, segmentId, lastKnownPos, internalTimer, stamina } = z;
+            let { lat, lng, heading, state, type, speed, targetWaypoint, segmentId, lastKnownPos, internalTimer, stamina, searchAttempts } = z;
             
             const traits = ZOMBIE_TRAITS[type];
             const distToPlayer = getDistance(lat, lng, currentPlayer.lat, currentPlayer.lng);
@@ -106,6 +108,7 @@ export function useZombieAI(
                 if (distToScreamer < 1000) {
                   state = 'SEARCHING';
                   targetWaypoint = { ...currentPlayer };
+                  searchAttempts = 2;
                   break;
                 }
               }
@@ -121,12 +124,13 @@ export function useZombieAI(
             }
             else if (state === 'CHASE') {
               if (type === 'ENDURANCE') {
-                 if (!canSensePlayer && distToPlayer > 150) state = 'IDLE'; 
+                 if (!canSensePlayer && distToPlayer > 350) state = 'IDLE'; // relentless: only drops if you break sight AND get far
                  else lastKnownPos = { ...currentPlayer };
               } else {
                  if (!canSensePlayer) {
                    state = 'SEARCHING';
-                   targetWaypoint = { ...currentPlayer }; 
+                   targetWaypoint = { ...currentPlayer };
+                   searchAttempts = 2; // hunt toward your position a few more times before quitting
                  } else {
                    lastKnownPos = { ...currentPlayer };
                  }
@@ -137,27 +141,32 @@ export function useZombieAI(
                  state = 'CHASE';
                }
                else if (targetWaypoint && getDistance(lat, lng, targetWaypoint.lat, targetWaypoint.lng) < 5) {
-                 state = 'IDLE'; 
-                 targetWaypoint = null;
+                 if (searchAttempts > 0 && distToPlayer < 320) {
+                   searchAttempts--;
+                   targetWaypoint = { ...currentPlayer }; // re-home onto your current spot
+                 } else {
+                   state = 'IDLE';
+                   targetWaypoint = null;
+                 }
                }
             }
 
             internalTimer += deltaTime;
 
             if (type === 'BURST') {
-              const cycle = internalTimer % 4;
-              if (cycle < 2) state = 'FROZEN';
-              else if (state === 'FROZEN') state = 'IDLE'; 
+              const cycle = internalTimer % 3;
+              if (cycle < 1) state = 'FROZEN'; // 1s coil, 2s dash
+              else if (state === 'FROZEN') state = 'IDLE';
             }
 
             if (type === 'SPRINTER' && state === 'CHASE') {
                if (stamina > 0) {
-                 speed = traits.chaseSpeed; 
-                 stamina -= deltaTime * 30; 
+                 speed = traits.chaseSpeed;
+                 stamina -= deltaTime * 18; // ~5.5s sprint
                } else {
-                 speed = 1.5; 
-                 stamina -= deltaTime * 5; 
-                 if (stamina < -20) stamina = 100; 
+                 speed = 3.5; // exhausted, but still jogs you down
+                 stamina -= deltaTime * 5;
+                 if (stamina < -10) stamina = 100; // ~2s to catch its breath
                }
             } else if (type === 'SPRINTER') {
                stamina = 100;
@@ -186,7 +195,7 @@ export function useZombieAI(
               desiredHeading = getBearing(lat, lng, currentPlayer.lat, currentPlayer.lng);
             } else if (state === 'SEARCHING' && targetWaypoint) {
               desiredHeading = getBearing(lat, lng, targetWaypoint.lat, targetWaypoint.lng);
-              if (moveSpeed < traits.chaseSpeed * 0.7) moveSpeed = traits.chaseSpeed * 0.7;
+              moveSpeed = traits.chaseSpeed; // hunt at full pace, not a stroll
             } else if (state === 'IDLE') {
                if (!targetWaypoint || getDistance(lat, lng, targetWaypoint.lat, targetWaypoint.lng) < 3) {
                  if (currentRoads[segmentId]) {
@@ -232,7 +241,7 @@ export function useZombieAI(
               }
             }
 
-            return { ...z, lat: snappedPos.lat, lng: snappedPos.lng, heading, state, speed: moveSpeed, targetWaypoint, lastKnownPos, segmentId, internalTimer, stamina };
+            return { ...z, lat: snappedPos.lat, lng: snappedPos.lng, heading, state, speed: moveSpeed, targetWaypoint, lastKnownPos, segmentId, internalTimer, stamina, searchAttempts };
           });
 
           zombiesRef.current = updatedZombies;

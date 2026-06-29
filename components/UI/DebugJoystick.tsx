@@ -14,7 +14,7 @@ export default function DebugJoystick({ currentPosition, onMove }: Props) {
   const [activeDirection, setActiveDirection] = useState<Direction>(null);
   const requestRef = useRef<number>(0);
 
-  const SPEED = 0.000008;
+  const SPEED = 0.000108;
 
   useEffect(() => {
     const moveLoop = () => {
