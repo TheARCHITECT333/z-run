@@ -10,7 +10,7 @@ import GameOverlay, { GameState } from '../UI/GameOverlay';
 import { generateSafeZone, fetchRoadsInArea, spawnZombies, getDistance, RoadSegment } from '@/hooks/geo';
 import { ZOMBIE_TRAITS } from '@/config/ZombieTraits';
 
-const ENABLE_DEBUG_MODE = true; 
+const ENABLE_DEBUG_MODE = false; 
 
 // Marker
 const survivorIcon = L.divIcon({
