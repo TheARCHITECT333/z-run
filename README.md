@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Z‑Run
 
-## Getting Started
+A mobile, real‑world zombie‑survival running game. Your phone's GPS is your character — walk or run through real streets to reach the extraction point before the horde catches you. Built on real OpenStreetMap road data, so zombies chase you along actual roads and lose you behind real buildings.
 
-First, run the development server:
+## How it works
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Goal.** Reach the extraction point and get within 50 m to win. One touch from a zombie ends the run.
+- **Move.** Your real GPS position moves you on a live map. A clock tracks how long you survive.
+- **Threat.** Zombies hunt by sight and by sound. Break line of sight behind buildings to shake them. Different types behave differently — sprinters close fast, screamers drag the whole horde onto you, others stalk relentlessly.
+- **Modes.** *Quick deploy* drops a random extraction point at a chosen radius; *Plan route* lets you pick your own destination on the map. Bigger radius = longer run and more hostiles.
+
+## Tech
+
+- Next.js 16 (App Router, Turbopack) · React 19 · TypeScript 5
+- Tailwind CSS v4
+- Leaflet + react‑leaflet for the map
+- OpenStreetMap roads via the Overpass API (road‑snapped movement + line‑of‑sight occlusion)
+
+## Project layout
+
+```
+app/                     Next.js app router (layout, page, global styles)
+components/Map/           Game container + Leaflet map
+components/UI/            Menus, HUD, win/lose screens
+config/ZombieTraits.ts   Zombie types and their stats
+hooks/geo.ts             Distance, road fetching, spawning, pathfinding
+hooks/useZombieAI.ts     Per-frame zombie AI loop (chase / search / scream)
+hooks/useGeolocation.ts  GPS watch + smoothing
+hooks/ai.ts              Bearing / movement / line-of-sight helpers
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Getting started
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000). For real GPS play, open it on a phone over HTTPS (geolocation requires a secure context).
 
-## Learn More
+### Debug mode
 
-To learn more about Next.js, take a look at the following resources:
+`components/Map/GameComponent.tsx` has `ENABLE_DEBUG_MODE` near the top. While `true`, an on‑screen joystick replaces real GPS so you can test on a desktop. Set it to `false` for real‑world GPS play.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Build
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+pnpm run build
+pnpm start
+```
