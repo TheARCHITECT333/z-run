@@ -102,7 +102,7 @@ export async function fetchRoadsInArea(startLat: number, startLng: number, endLa
     }
   }
 
-  console.warn("All road endpoints failed — falling back to off-road spawns.");
+  console.warn("All road endpoints failed - falling back to off-road spawns.");
   return [];
 }
 

@@ -19,7 +19,7 @@ export interface ZombieTrait {
 export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
   WALKER: {
     name: "Walker",
-    description: "The bulk of the horde. Slow to turn, but it never tires — and there are always more.",
+    description: "The bulk of the horde. Slow to turn, but it never tires - and there are always more.",
     spawnWeight: 45,
     baseSpeed: 3.5,
     chaseSpeed: 6.5,
@@ -75,7 +75,7 @@ export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
   },
   SYNC: {
     name: "Sync",
-    description: "Mirrors your movement. Stand still to stall it — but you can't stand still for long.",
+    description: "Mirrors your movement. Stand still to stall it - but you can't stand still for long.",
     spawnWeight: 7,
     baseSpeed: 0,
     chaseSpeed: 8,
@@ -103,7 +103,7 @@ export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
   },
   SCREAMER: {
     name: "Screamer",
-    description: "Won't chase hard — but its scream drags the entire horde down onto your position.",
+    description: "Won't chase hard - but its scream drags the entire horde down onto your position.",
     spawnWeight: 5,
     baseSpeed: 3.5,
     chaseSpeed: 5,

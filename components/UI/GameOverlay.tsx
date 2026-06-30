@@ -130,6 +130,20 @@ export default function GameOverlay({
           <button onClick={() => onSelectMode('CUSTOM')} className={btnGhost}>
             Plan route
           </button>
+
+          <details className="group rounded-xl border border-white/10 bg-white/[0.03]">
+            <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3 font-mono text-[11px] uppercase tracking-widest text-zinc-400">
+              How to play
+              <span className="text-zinc-600 transition-transform group-open:rotate-90">›</span>
+            </summary>
+            <div className="space-y-3 border-t border-white/10 px-5 py-4 text-xs leading-relaxed text-zinc-400">
+              <p><span className="text-white">Goal.</span> Reach the green extraction point before the horde catches you. Get within 50 m to win.</p>
+              <p><span className="text-white">Move.</span> Walk in the real world - your phone’s GPS moves you on the map. The clock counts how long you survive.</p>
+              <p><span className="text-red-500">Danger.</span> Zombies chase on sight and on sound. Break line of sight behind buildings to lose them. Some sprint, some scream for the whole horde. One touch ends the run.</p>
+              <p><span className="text-white">Tip.</span> Bigger sector radius = farther run and more hostiles. Start at 0.5–1 km.</p>
+            </div>
+          </details>
+
           <p className="pt-1 text-center font-mono text-[10px] tracking-widest text-zinc-600">
             QUICK = RANDOM EXTRACTION · PLAN = PICK YOUR OWN
           </p>

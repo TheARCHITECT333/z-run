@@ -163,7 +163,7 @@ export default function GameComponent() {
     const roads = await fetchRoadsInArea(position.lat, position.lng, target.lat, target.lng);
     setRoadData(roads);
     
-    const zombieCount = Math.floor(distanceKm * 40); 
+    const zombieCount = Math.floor(Math.max(distanceKm, selectedRadiusKm) * 40);
     const spawns = spawnZombies(roads, zombieCount, position.lat, position.lng, target.lat, target.lng);
 
     setSafeZone({ ...target, accuracy: 0, heading: 0 });
