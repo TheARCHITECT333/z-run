@@ -27,8 +27,8 @@ export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
     fov: 130,
     proximityRange: 70,
     turnRate: 170,
-    colorClass: "bg-zinc-700",
-    arrowColorClass: "border-b-zinc-700",
+    colorClass: "bg-zinc-800",
+    arrowColorClass: "border-b-zinc-800",
     image: "https://placehold.co/600x400/27272a/FFF?text=Walker"
   },
   SPRINTER: {
@@ -55,8 +55,8 @@ export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
     fov: 130,
     proximityRange: 80,
     turnRate: 140,
-    colorClass: "bg-slate-700",
-    arrowColorClass: "border-b-slate-700",
+    colorClass: "bg-slate-800",
+    arrowColorClass: "border-b-slate-800",
     image: "https://placehold.co/600x400/334155/FFF?text=Endurance"
   },
   BURST: {
@@ -83,8 +83,8 @@ export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
     fov: 360,
     proximityRange: 80,
     turnRate: 500,
-    colorClass: "bg-indigo-700",
-    arrowColorClass: "border-b-indigo-700",
+    colorClass: "bg-indigo-800",
+    arrowColorClass: "border-b-indigo-800",
     image: "https://placehold.co/600x400/4338ca/FFF?text=Sync"
   },
   STAGGERER: {
@@ -97,8 +97,8 @@ export const ZOMBIE_TRAITS: Record<ZombieType, ZombieTrait> = {
     fov: 120,
     proximityRange: 80,
     turnRate: 120,
-    colorClass: "bg-purple-700",
-    arrowColorClass: "border-b-purple-700",
+    colorClass: "bg-purple-800",
+    arrowColorClass: "border-b-purple-800",
     image: "https://placehold.co/600x400/7e22ce/FFF?text=Staggerer"
   },
   SCREAMER: {
